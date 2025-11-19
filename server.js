@@ -2,7 +2,7 @@
 // COMBINED SERVER – JSON Server + Express
 // Ready for deployment on Render
 // =====================================
-
+const fetch = require("node-fetch");
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
@@ -406,3 +406,4 @@ if (!IS_TEST) {
     console.log(`Server is running on port ${PORT}`);
   });
 }
+
