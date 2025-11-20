@@ -1,0 +1,296 @@
+openapi: 3.0.3
+info:
+  title: Sony POS Backend (Milestone 3+)
+  version: 0.3.0
+servers:
+  - url: http://localhost:3000
+
+paths:
+  /health:
+    get:
+      summary: API health
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+
+  /db-health:
+    get:
+      summary: Database health (SQLite)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  db:
+                    type: string
+                    example: up
+                  result:
+                    type: boolean
+                    example: true
+
+  /products:
+    get:
+      summary: List demo products
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Product'
+
+  /orders:
+    get:
+      summary: List recent orders (paginated)
+      parameters:
+        - in: query
+          name: limit
+          description: Max rows to return (1–200)
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 100
+        - in: query
+          name: offset
+          description: Rows to skip (for pagination)
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Orders list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrderRow'
+
+  /orders/{orderId}:
+    get:
+      summary: Get order detail with last authorization & settlement
+      parameters:
+        - in: path
+          name: orderId
+          required: true
+          schema:
+            type: string
+            example: ORD2001
+      responses:
+        '200':
+          description: Order detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order:
+                    $ref: '#/components/schemas/OrderRow'
+                  lastAuthorization:
+                    oneOf:
+                      - $ref: '#/components/schemas/AuthorizationRow'
+                      - type: "null"
+                  lastSettlement:
+                    oneOf:
+                      - $ref: '#/components/schemas/SettlementRow'
+                      - type: "null"
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /orders/checkout:
+    post:
+      summary: Checkout (authorize)
+      description: Creates/updates an order (PENDING), records authorization (SUCCESS/DECLINED/ERROR), updates status, and audits the result.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckoutInput'
+            examples:
+              sample:
+                value:
+                  orderId: "ORD2001"
+                  customerId: 1
+                  amount: 50.00
+                  last4: "4242"
+      responses:
+        '200':
+          description: Authorization result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckoutResult'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/DB error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /payments/settle:
+    post:
+      summary: Settle an authorized order
+      description: Allowed only when order is AUTHORIZED and amount ≤ last authorized amount.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettleInput'
+            examples:
+              sample:
+                value:
+                  orderId: "ORD2001"
+                  amount: 50.00
+      responses:
+        '200':
+          description: Settlement successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettleResult'
+        '400':
+          description: Business rule violation or bad input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/DB error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  schemas:
+    Product:
+      type: object
+      properties:
+        sku:   { type: string, example: SONY-PS5-STD }
+        name:  { type: string, example: PlayStation 5 }
+        price: { type: number, format: float, example: 499.00 }
+
+    OrderRow:
+      type: object
+      properties:
+        order_id:
+          type: string
+          example: ORD2001
+        customer_id:
+          type: integer
+          example: 1
+        order_amount:
+          type: number
+          format: float
+          example: 50.00
+        status_id:
+          type: string
+          enum: [PENDING, AUTHORIZED, DECLINED, ERROR, SETTLED]
+          example: AUTHORIZED
+        order_date:
+          type: string
+          format: date-time
+          example: 2025-01-02T00:00:00Z
+
+    AuthorizationRow:
+      type: object
+      properties:
+        auth_id:     { type: integer, example: 12 }
+        response_id:
+          type: string
+          enum: [SUCCESS, INVALID_CARD, INSUFFICIENT_FUNDS, SERVER_ERROR]
+          example: SUCCESS
+        auth_amnt:   { type: number, format: float, example: 50.00 }
+        ref_num:     { type: string, example: REF1700000000000 }
+        last_4:      { type: string, example: "4242" }
+        audit_date:  { type: string, format: date-time }
+
+    SettlementRow:
+      type: object
+      properties:
+        settlement_id:   { type: integer, example: 7 }
+        settled_amnt:    { type: number, format: float, example: 50.00 }
+        settlement_stat: { type: string, enum: [SETTLED, REVERSED], example: SETTLED }
+        settlement_date: { type: string, format: date-time }
+
+    CheckoutInput:
+      type: object
+      required: [orderId, customerId, amount, last4]
+      properties:
+        orderId:    { type: string, example: ORD2001 }
+        customerId: { type: integer, example: 1 }
+        amount:     { type: number, format: float, example: 50.00 }
+        last4:
+          type: string
+          minLength: 4
+          maxLength: 4
+          example: "4242"
+
+    CheckoutResult:
+      type: object
+      properties:
+        orderId: { type: string, example: ORD2001 }
+        result:
+          type: string
+          enum: [SUCCESS, INVALID_CARD, INSUFFICIENT_FUNDS, SERVER_ERROR]
+          example: SUCCESS
+        status:
+          type: string
+          enum: [PENDING, AUTHORIZED, DECLINED, ERROR, SETTLED]
+          example: AUTHORIZED
+        authId:  { type: integer, example: 12 }
+
+    SettleInput:
+      type: object
+      required: [orderId, amount]
+      properties:
+        orderId: { type: string, example: ORD2001 }
+        amount:  { type: number, format: float, example: 50.00 }
+
+    SettleResult:
+      type: object
+      properties:
+        orderId:       { type: string, example: ORD2001 }
+        paymentStatus: { type: string, enum: [SETTLED], example: SETTLED }
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: Order is not authorized
